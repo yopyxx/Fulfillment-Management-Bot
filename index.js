@@ -18,7 +18,7 @@ const { google } = require('googleapis');
 const TOKEN = process.env.TOKEN;
 const GUILD_ID = '1018194815286001756';
 
-// ✅ 스프레드시트 ID (사용자 제공)
+// ✅ 스프레드시트 ID
 const SPREADSHEET_ID = '1EhC_xDBXR7mm7_KdVPp2dKPjNSKClcEEHIZT6ZPvfaQ';
 
 // ================== Railway용: 서비스계정 JSON을 env로 받아 파일로 생성 ==================
@@ -58,7 +58,6 @@ async function appendRowToSheet(rangeA1, values) {
   });
 }
 
-// ✅ 시트에 이미지로 표시 (원하면 HYPERLINK로 바꿀 수 있음)
 function toImageFormula(url) {
   return `=IMAGE("${url}")`;
   // return `=HYPERLINK("${url}","사진")`;
@@ -291,6 +290,10 @@ async function getEligibleMemberIdsByRank(guild, rankName) {
   return ids;
 }
 
+// ================== 점수 계산 핵심 ==================
+// ✅ 최소업무 미달이어도 "추가점수는 그대로 적용"
+// - 미달자: adminPoints = 0, extraPoints = min(30, extraRaw), total = extraPoints
+// - 충족자: adminPoints + extraPoints
 function buildDayScoresForMembers(rankName, dateStr, memberIds) {
   const is소령 = rankName === '소령';
   const minRequired = is소령 ? 3 : 4;
@@ -312,7 +315,7 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
       meetsMin,
       adminPoints: 0,
       extraPoints: Math.min(30, extraRaw),
-      total: Math.min(100, Math.min(30, extraRaw)),
+      total: Math.min(30, extraRaw),
       percentile: null
     };
   });
@@ -336,16 +339,11 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
     cur.total = Math.min(100, cur.adminPoints + cur.extraPoints);
   }
 
-  for (const r of rows) {
-    if (!r.meetsMin) {
-      r.adminPoints = 0;
-      r.extraPoints = Math.min(30, r.extraRaw);
-      r.total = Math.min(100, r.extraPoints);
-      r.percentile = null;
-    }
-  }
+  const display = [...rows].sort((a, b) => {
+    if (b.total !== a.total) return b.total - a.total;
+    return b.adminUnits - a.adminUnits;
+  });
 
-  const display = [...rows].sort((a, b) => b.total - a.total);
   return { rows, display, dateStr };
 }
 
@@ -371,14 +369,13 @@ function getDayTotalsOnly(rankName, dateStr) {
   const n = eligible.length;
   const totalsMap = new Map();
 
+  // ✅ 일단 전체 인원에게 "추가점수만 반영된 점수"를 기본 세팅
   for (const r of rows) {
-    if (!r.meetsMin) {
-      const extraPoints = Math.min(30, r.extraRaw);
-      const total = Math.min(100, extraPoints);
-      totalsMap.set(r.userId, total);
-    }
+    const extraPoints = Math.min(30, r.extraRaw);
+    totalsMap.set(r.userId, extraPoints);
   }
 
+  // ✅ 최소업무 충족자만 행정점수 추가
   for (let i = 0; i < n; i++) {
     const cur = eligible[i];
 
@@ -430,17 +427,17 @@ function createDailyEmbedPaged(rankName, dateStr, fullList, page, pageSize, titl
 
   const lines = slice.length
     ? slice.map((r, i) => {
-      const rankNo = start + i + 1;
-      const minText = r.meetsMin ? '' : ' (최소업무 미달)';
-      const pctText = r.percentile ? ` / 상위 ${r.percentile}%` : '';
-      return `**${rankNo}위** ${r.nick} — **${r.total}점** 〔행정: ${r.adminPoints}${pctText} / 추가: ${r.extraPoints}${minText}〕`;
-    }).join('\n')
+        const rankNo = start + i + 1;
+        const minText = r.meetsMin ? '' : ' (최소업무 미달)';
+        const pctText = r.percentile ? ` / 상위 ${r.percentile}%` : '';
+        return `**${rankNo}위** ${r.nick} — **${r.total}점** 〔행정: ${r.adminPoints}${pctText} / 추가: ${r.extraPoints}${minText}〕`;
+      }).join('\n')
     : '데이터가 없습니다.';
 
   return new EmbedBuilder()
     .setTitle(`${rankName} ${titlePrefix} (${dateStr}) (최대 100점)`)
     .setDescription(lines)
-    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 최소업무 미달자는 퍼센트 산정 제외 / 추가점수는 그대로 적용` });
+    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 최소업무 미달자는 행정점수 0점, 추가점수는 그대로 반영` });
 }
 
 function createWeeklyEmbedPaged(rankName, weekStart, weekEnd, fullList, page, pageSize, titlePrefix) {
@@ -453,15 +450,15 @@ function createWeeklyEmbedPaged(rankName, weekStart, weekEnd, fullList, page, pa
 
   const lines = slice.length
     ? slice.map((u, i) => {
-      const rankNo = start + i + 1;
-      return `**${rankNo}위** ${u.nick} — **${u.weeklyTotal}점**`;
-    }).join('\n')
+        const rankNo = start + i + 1;
+        return `**${rankNo}위** ${u.nick} — **${u.weeklyTotal}점**`;
+      }).join('\n')
     : '데이터가 없습니다.';
 
   return new EmbedBuilder()
     .setTitle(`${rankName} ${titlePrefix}`)
     .setDescription(`**주간 범위(새벽 2시 기준)**: ${weekStart} ~ ${weekEnd} (7일)\n\n${lines}`)
-    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 주간=일~토(7일) 합산 / 최소업무 미달도 추가점수는 적용` });
+    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 주간=일~토(7일) 합산 / 최소업무 미달일도 추가점수는 반영` });
 }
 
 function createDemotionEmbed(list, page, pageSize, totalPages) {
@@ -470,9 +467,9 @@ function createDemotionEmbed(list, page, pageSize, totalPages) {
 
   const lines = slice.length
     ? slice.map((x, i) => {
-      const rankNo = start + i + 1;
-      return `**${rankNo}위** ${x.mention} — **총합 ${x.totalScore}점** 〔${x.rankName}〕`;
-    }).join('\n')
+        const rankNo = start + i + 1;
+        return `**${rankNo}위** ${x.mention} — **총합 ${x.totalScore}점** 〔${x.rankName}〕`;
+      }).join('\n')
     : '대상이 없습니다.';
 
   return new EmbedBuilder()
@@ -705,6 +702,7 @@ client.once('ready', async () => {
 
 // ================== interactionCreate ==================
 client.on('interactionCreate', async interaction => {
+  // 버튼 처리
   if (interaction.isButton()) {
     const customId = interaction.customId || '';
 
@@ -738,7 +736,13 @@ client.on('interactionCreate', async interaction => {
           const group = rankName === '소령' ? data.소령 : data.중령;
 
           const totals = {};
-          for (const uid of memberIds) totals[uid] = { userId: uid, nick: group.users?.[uid]?.nick || `<@${uid}>`, weeklyTotal: 0 };
+          for (const uid of memberIds) {
+            totals[uid] = {
+              userId: uid,
+              nick: group.users?.[uid]?.nick || `<@${uid}>`,
+              weeklyTotal: 0
+            };
+          }
 
           for (const d of weekDates) {
             const totalsMap = getDayTotalsOnly(rankName, d);
@@ -811,6 +815,7 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
+  // 슬래시
   if (!interaction.isChatInputCommand()) return;
   const cmd = interaction.commandName;
 
@@ -819,9 +824,11 @@ client.on('interactionCreate', async interaction => {
   const isMajor = () => hasRole(MAJOR_ROLE_ID);
   const isLtCol = () => hasRole(LTCOL_ROLE_ID);
 
+  // 역할 제한
   if (cmd === '소령행정보고' && !isMajor()) return interaction.reply({ content: '❌ 이 명령어는 **소령 역할**만 사용할 수 있습니다.', ephemeral: true });
   if (cmd === '중령행정보고' && !isLtCol()) return interaction.reply({ content: '❌ 이 명령어는 **중령 역할**만 사용할 수 있습니다.', ephemeral: true });
 
+  // ================== 행정보고 ==================
   if (cmd === '소령행정보고' || cmd === '중령행정보고') {
     const is소령 = cmd === '소령행정보고';
     const date = getReportDate();
@@ -885,7 +892,10 @@ client.on('interactionCreate', async interaction => {
     if (photoAttachments.length > 0) replyText += `\n📸 증거 사진 ${photoAttachments.length}장 첨부됨`;
 
     const group = is소령 ? data.소령 : data.중령;
-    if (!group.users[interaction.user.id]) group.users[interaction.user.id] = { nick: displayName, totalAdmin: 0, totalExtra: 0, daily: {} };
+    if (!group.users[interaction.user.id]) {
+      group.users[interaction.user.id] = { nick: displayName, totalAdmin: 0, totalExtra: 0, daily: {} };
+    }
+
     const u = group.users[interaction.user.id];
     u.nick = displayName;
 
@@ -898,6 +908,7 @@ client.on('interactionCreate', async interaction => {
     dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${date}`);
     saveData();
 
+    // ================== 구글 시트 저장 (증거사진은 저장하지 않음) ==================
     try {
       if (is소령) {
         await appendRowToSheet('소령!A:K', [
@@ -948,6 +959,7 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
+  // ================== 감독관 전용 ==================
   const supervisorOnlyCmds = new Set([
     '소령오늘점수', '소령주간점수', '소령어제점수', '소령지난주점수',
     '중령오늘점수', '중령주간점수', '중령어제점수', '중령지난주점수',
@@ -991,7 +1003,13 @@ client.on('interactionCreate', async interaction => {
     const group = rankName === '소령' ? data.소령 : data.중령;
 
     const totals = {};
-    for (const uid of memberIds) totals[uid] = { userId: uid, nick: group.users?.[uid]?.nick || `<@${uid}>`, weeklyTotal: 0 };
+    for (const uid of memberIds) {
+      totals[uid] = {
+        userId: uid,
+        nick: group.users?.[uid]?.nick || `<@${uid}>`,
+        weeklyTotal: 0
+      };
+    }
 
     for (const d of weekDates) {
       const totalsMap = getDayTotalsOnly(rankName, d);
@@ -1226,7 +1244,7 @@ client.on('interactionCreate', async interaction => {
         `- 등록 인원: ${sLt.userCount}명\n` +
         `- 누적(원자료): 행정(건수) ${sLt.totalAdmin} / 추가(점수) ${sLt.totalExtra}\n` +
         `- 오늘(원자료): 행정(건수) ${sLt.todayAdminUnits} / 추가(점수) ${sLt.todayExtra}\n\n` +
-        `※ 최소업무 미달이어도 추가점수는 그대로 반영됩니다.`
+        `※ 최소업무 미달이어도 추가점수는 점수 합산에 반영됩니다.`
       );
 
     return interaction.reply({ embeds: [embed] });
@@ -1249,13 +1267,23 @@ client.login(TOKEN);
 - 사령본부: 1480916945963585566
 - 인사행정부단장: 1480918241831424040
 
-2) 최소업무 기준 미달 시 처리 변경
+2) 최소업무 미달 처리 변경
 - 소령 3 미만 / 중령 4 미만이어도
-  행정점수는 0점
-  추가점수는 그대로 적용
-- 단, 퍼센트 산정에서는 제외
+  "행정점수는 0점" 처리
+  "추가점수는 그대로 반영"
 
-3) 구글 시트 저장
-- 증거사진은 저장하지 않음
-- 시트 탭 이름은 반드시 '소령', '중령'
+3) 반영 범위
+- 오늘점수
+- 어제점수
+- 주간점수
+- 지난주점수
+- 강등대상
+- 자동 스냅샷
+- 내부 일별/주간 합산
+
+4) 구글 시트
+- 기존처럼 증거사진은 저장하지 않음
+- 시트 계산식은 따로 유지 가능
+
+※ 시트 탭 이름은 반드시 '소령', '중령' 이어야 합니다.
 */
