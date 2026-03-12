@@ -51,8 +51,8 @@ async function appendRowToSheet(rangeA1, values) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: rangeA1,                     // 예: '소령!A:Z'
-    valueInputOption: 'USER_ENTERED',   // ✅ =IMAGE 가능
+    range: rangeA1,
+    valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [values] }
   });
@@ -75,29 +75,29 @@ const client = new Client({
 
 // ================== 역할 ID ==================
 const SUPERVISOR_ROLE_IDS = [
-  '1018195904261529691', // 감독관
-  '1473688580613341419'  // 인사행정부단장
+  '1480915647922966658', // 감독관
+  '1480918241831424040'  // 인사행정부단장
 ];
 
 const MAJOR_ROLE_ID = '1472582859339596091';   // 소령
 const LTCOL_ROLE_ID = '1018447060627894322';   // 중령
 
 const EXCLUDED_ROLE_IDS = [
-  '1018195904261529691', // 감독관
-  '1463433369869090962', // 사령본부
-  '1473688580613341419'  // 인사행정부단장
+  '1480915647922966658', // 감독관
+  '1480916945963585566', // 사령본부
+  '1480918241831424040'  // 인사행정부단장
 ];
 
 const DEMOTION_EXCLUDED_ROLE_IDS = [
   '1477394729808298167', // 법무교육단
-  '1018195904261529691', // 감독관
-  '1463433369869090962', // 사령본부
-  '1473688580613341419'  // 인사행정부단장
+  '1480915647922966658', // 감독관
+  '1480916945963585566', // 사령본부
+  '1480918241831424040'  // 인사행정부단장
 ];
 
 const DEMOTION_ALLOWED_ROLE_IDS = [
-  '1018195904261529691', // 감독관
-  '1473688580613341419'  // 인사행정부단장
+  '1480915647922966658', // 감독관
+  '1480918241831424040'  // 인사행정부단장
 ];
 
 const DATA_DIR = path.join(__dirname, 'data');
@@ -311,8 +311,8 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
       extraRaw,
       meetsMin,
       adminPoints: 0,
-      extraPoints: 0,
-      total: 0,
+      extraPoints: Math.min(30, extraRaw),
+      total: Math.min(100, Math.min(30, extraRaw)),
       percentile: null
     };
   });
@@ -339,8 +339,8 @@ function buildDayScoresForMembers(rankName, dateStr, memberIds) {
   for (const r of rows) {
     if (!r.meetsMin) {
       r.adminPoints = 0;
-      r.extraPoints = 0;
-      r.total = 0;
+      r.extraPoints = Math.min(30, r.extraRaw);
+      r.total = Math.min(100, r.extraPoints);
       r.percentile = null;
     }
   }
@@ -370,6 +370,14 @@ function getDayTotalsOnly(rankName, dateStr) {
 
   const n = eligible.length;
   const totalsMap = new Map();
+
+  for (const r of rows) {
+    if (!r.meetsMin) {
+      const extraPoints = Math.min(30, r.extraRaw);
+      const total = Math.min(100, extraPoints);
+      totalsMap.set(r.userId, total);
+    }
+  }
 
   for (let i = 0; i < n; i++) {
     const cur = eligible[i];
@@ -432,7 +440,7 @@ function createDailyEmbedPaged(rankName, dateStr, fullList, page, pageSize, titl
   return new EmbedBuilder()
     .setTitle(`${rankName} ${titlePrefix} (${dateStr}) (최대 100점)`)
     .setDescription(lines)
-    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 최소업무 미달자는 0점 + 퍼센트 산정에서 제외` });
+    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 최소업무 미달자는 퍼센트 산정 제외 / 추가점수는 그대로 적용` });
 }
 
 function createWeeklyEmbedPaged(rankName, weekStart, weekEnd, fullList, page, pageSize, titlePrefix) {
@@ -453,7 +461,7 @@ function createWeeklyEmbedPaged(rankName, weekStart, weekEnd, fullList, page, pa
   return new EmbedBuilder()
     .setTitle(`${rankName} ${titlePrefix}`)
     .setDescription(`**주간 범위(새벽 2시 기준)**: ${weekStart} ~ ${weekEnd} (7일)\n\n${lines}`)
-    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 주간=일~토(7일) 합산 / 일일 행정점수는 퍼센트 기준` });
+    .setFooter({ text: `페이지 ${p + 1}/${totalPages} · 주간=일~토(7일) 합산 / 최소업무 미달도 추가점수는 적용` });
 }
 
 function createDemotionEmbed(list, page, pageSize, totalPages) {
@@ -697,7 +705,6 @@ client.once('ready', async () => {
 
 // ================== interactionCreate ==================
 client.on('interactionCreate', async interaction => {
-  // 버튼 처리(그대로)
   if (interaction.isButton()) {
     const customId = interaction.customId || '';
 
@@ -804,7 +811,6 @@ client.on('interactionCreate', async interaction => {
     return;
   }
 
-  // 슬래시
   if (!interaction.isChatInputCommand()) return;
   const cmd = interaction.commandName;
 
@@ -813,24 +819,19 @@ client.on('interactionCreate', async interaction => {
   const isMajor = () => hasRole(MAJOR_ROLE_ID);
   const isLtCol = () => hasRole(LTCOL_ROLE_ID);
 
-  // 역할 제한
   if (cmd === '소령행정보고' && !isMajor()) return interaction.reply({ content: '❌ 이 명령어는 **소령 역할**만 사용할 수 있습니다.', ephemeral: true });
   if (cmd === '중령행정보고' && !isLtCol()) return interaction.reply({ content: '❌ 이 명령어는 **중령 역할**만 사용할 수 있습니다.', ephemeral: true });
 
-  // ================== ✅ 행정보고 ==================
   if (cmd === '소령행정보고' || cmd === '중령행정보고') {
     const is소령 = cmd === '소령행정보고';
     const date = getReportDate();
 
-    // ✅ 디스코드 표시: 자동 멘션
     const mention = `<@${interaction.user.id}>`;
-
-    // ✅ 시트/로컬 저장: 실제 닉네임(displayName)
     const displayName = interaction.member?.displayName || interaction.user.username;
 
     let replyText =
       `✅ **${is소령 ? '소령' : '중령'} 보고 완료!**\n` +
-      `**닉네임**: ${mention}\n` + // ✅ 멘션으로 표시
+      `**닉네임**: ${mention}\n` +
       `**일자**: ${date}\n\n`;
 
     let adminCount = 0, extra = 0;
@@ -876,7 +877,6 @@ client.on('interactionCreate', async interaction => {
       replyText += `**피드백 제공**: ${input.피드백}건\n`;
     }
 
-    // 사진
     const photoAttachments = [];
     for (let i = 1; i <= 10; i++) {
       const att = interaction.options.getAttachment(`증거사진${i}`);
@@ -884,7 +884,6 @@ client.on('interactionCreate', async interaction => {
     }
     if (photoAttachments.length > 0) replyText += `\n📸 증거 사진 ${photoAttachments.length}장 첨부됨`;
 
-    // 로컬 저장(닉네임은 displayName으로 유지)
     const group = is소령 ? data.소령 : data.중령;
     if (!group.users[interaction.user.id]) group.users[interaction.user.id] = { nick: displayName, totalAdmin: 0, totalExtra: 0, daily: {} };
     const u = group.users[interaction.user.id];
@@ -899,41 +898,35 @@ client.on('interactionCreate', async interaction => {
     dayTotalsCache.delete(`${is소령 ? '소령' : '중령'}|${date}`);
     saveData();
 
-// ================== ✅ 구글 시트 저장 (증거사진은 저장하지 않음) ==================
-try {
-  if (is소령) {
-    // 소령: 일자 / 닉네임 / 권한지급 / 랭크변경 / 팀변경 / 보직/모집 / 인게임시험
-    await appendRowToSheet('소령!A:K', [
-      date,
-      displayName,
-      input.권한지급,
-      input.랭크변경,
-      input.팀변경,
-      input.보직모집,
-      input.인게임시험
-      // H~K는 시트 수식으로 자동 계산 (행정총건수/추가점수/행정점수/최종총점)
-    ]);
-  } else {
-    // 중령: 일자 / 닉네임 / 역할지급 / 인증 / 서버역할요청 / 감찰 / 인게임시험 / 코호스트 / 피드백
-    await appendRowToSheet('중령!A:M', [
-      date,
-      displayName,
-      input.역할지급,
-      input.인증,
-      input.서버역할,
-      input.감찰,
-      input.인게임시험,
-      input.코호스트,
-      input.피드백
-      // J~M은 시트 수식으로 자동 계산
-    ]);
-  }
-} catch (e) {
-  console.error('❌ 구글시트 저장 실패:', e);
-  replyText += `\n\n⚠️ 구글 시트 자동 기입에 실패했습니다. Railway Logs를 확인하세요.`;
-}
+    try {
+      if (is소령) {
+        await appendRowToSheet('소령!A:K', [
+          date,
+          displayName,
+          input.권한지급,
+          input.랭크변경,
+          input.팀변경,
+          input.보직모집,
+          input.인게임시험
+        ]);
+      } else {
+        await appendRowToSheet('중령!A:M', [
+          date,
+          displayName,
+          input.역할지급,
+          input.인증,
+          input.서버역할,
+          input.감찰,
+          input.인게임시험,
+          input.코호스트,
+          input.피드백
+        ]);
+      }
+    } catch (e) {
+      console.error('❌ 구글시트 저장 실패:', e);
+      replyText += `\n\n⚠️ 구글 시트 자동 기입에 실패했습니다. Railway Logs를 확인하세요.`;
+    }
 
-    // 디스코드 응답(사진 첨부 유지)
     let embeds = [];
     let files = [];
 
@@ -955,7 +948,6 @@ try {
     return;
   }
 
-  // ================== 감독관 전용 ==================
   const supervisorOnlyCmds = new Set([
     '소령오늘점수', '소령주간점수', '소령어제점수', '소령지난주점수',
     '중령오늘점수', '중령주간점수', '중령어제점수', '중령지난주점수',
@@ -1234,7 +1226,7 @@ try {
         `- 등록 인원: ${sLt.userCount}명\n` +
         `- 누적(원자료): 행정(건수) ${sLt.totalAdmin} / 추가(점수) ${sLt.totalExtra}\n` +
         `- 오늘(원자료): 행정(건수) ${sLt.todayAdminUnits} / 추가(점수) ${sLt.todayExtra}\n\n` +
-        `※ "점수"는 퍼센트 환산 후 계산됩니다.`
+        `※ 최소업무 미달이어도 추가점수는 그대로 반영됩니다.`
       );
 
     return interaction.reply({ embeds: [embed] });
@@ -1252,17 +1244,18 @@ client.login(TOKEN);
 /*
 ================== 적용 사항 ==================
 
-[디스코드]
-- 행정보고 응답의 닉네임 줄: 자동 멘션(<@id>)으로 표시
+1) 역할 ID 변경
+- 감독관: 1480915647922966658
+- 사령본부: 1480916945963585566
+- 인사행정부단장: 1480918241831424040
 
-[구글 시트]
-- 소령 시트 입력 순서:
-  일자, 닉네임(displayName), 권한지급, 랭크변경, 팀변경, 보직모집, 인게임시험, (사진은 뒤쪽 열)
+2) 최소업무 기준 미달 시 처리 변경
+- 소령 3 미만 / 중령 4 미만이어도
+  행정점수는 0점
+  추가점수는 그대로 적용
+- 단, 퍼센트 산정에서는 제외
 
-- 중령 시트 입력 순서:
-  일자, 닉네임(displayName), 역할지급, 인증, 서버역할, 감찰, 인게임시험, 코호스트, 피드백, (사진은 뒤쪽 열)
-
-※ 시트 탭 이름은 반드시 '소령', '중령' 이어야 합니다.
+3) 구글 시트 저장
+- 증거사진은 저장하지 않음
+- 시트 탭 이름은 반드시 '소령', '중령'
 */
-
-
